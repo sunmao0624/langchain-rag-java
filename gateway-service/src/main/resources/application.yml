@@ -1,0 +1,23 @@
+server:
+  port: 8080 # 网关统一暴漏的端口，前端以后只认这个端口
+
+spring:
+  application:
+    name: gateway-service
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 127.0.0.1:8848
+    gateway:
+      discovery:
+        locator:
+          enabled: true # 开启从 Nacos 注册中心动态拉取服务列表
+      routes: # 路由规则配置
+        - id: user_route                 # 路由 ID，保持唯一即可
+          uri: lb://user-service         # lb代表负载均衡(LoadBalance)，网关会去 Nacos 找叫 user-service 的服务
+          predicates:
+            - Path=/user/** # 拦截规则：只要是以 /user 开头的请求，统统转发给 user-service
+        - id: rag_route
+          uri: lb://rag-service
+          predicates:
+            - Path=/ai/** # 以后只要是 /ai/ 开头的请求，统统转发给 8082 的大模型服务
