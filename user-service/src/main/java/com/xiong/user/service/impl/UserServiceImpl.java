@@ -47,7 +47,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
         //校验密码：因为数据库存的是 BCrypt 加密后的乱码，必须使用 checkpw 方法进行底层比对
         if (user == null){
-            Result.error(400,"用户名或者密码错误");
+            return Result.error(400,"用户名或者密码错误");
         }
         boolean isMatch = BCrypt.checkpw(dto.getPassword(), user.getPassword());
         if (!isMatch){

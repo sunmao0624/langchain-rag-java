@@ -2,6 +2,10 @@ server:
   port: 8080 # 网关统一暴漏的端口，前端以后只认这个端口
 
 spring:
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
   application:
     name: gateway-service
   cloud:
@@ -9,6 +13,8 @@ spring:
       discovery:
         server-addr: 127.0.0.1:8848
     gateway:
+      httpclient:
+        max-initial-line-length: 65536
       discovery:
         locator:
           enabled: true # 开启从 Nacos 注册中心动态拉取服务列表
@@ -21,3 +27,7 @@ spring:
           uri: lb://rag-service
           predicates:
             - Path=/ai/** # 以后只要是 /ai/ 开头的请求，统统转发给 8082 的大模型服务
+        - id: note_route
+          uri: lb://note-service
+          predicates:
+            - Path=/note/** # 转发所有笔记模块的请求

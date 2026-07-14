@@ -2,6 +2,10 @@ server:
   port: 8082 # 给大模型服务分配 8082 端口
 
 spring:
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
   application:
     name: rag-service # Nacos 上的服务名
   cloud:

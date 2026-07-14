@@ -1,6 +1,7 @@
 package com.xiong.gateway;
 
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.jwt.JWT;
 import cn.hutool.jwt.JWTUtil;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
@@ -14,6 +15,9 @@ import reactor.core.publisher.Mono;
 
 @Component
 public class AuthFilter implements GlobalFilter, Ordered {
+
+    private static final byte[] KEY = "xiong_secret_key".getBytes();
+
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         ServerHttpRequest request = exchange.getRequest();
@@ -37,20 +41,38 @@ public class AuthFilter implements GlobalFilter, Ordered {
 
         // 4. 校验 Token 的合法性 (必须和 user-service 签发时用的密钥一致)
         try {
-            boolean verify = JWTUtil.verify(token, "xiong_secret_key".getBytes());
-            if (!verify) {
+            // 校验 Token
+            if (!JWTUtil.verify(token, KEY)) {
                 response.setStatusCode(HttpStatus.UNAUTHORIZED);
                 return response.setComplete();
             }
+            // 解析 Token
+            JWT jwt = JWTUtil.parseToken(token);
+
+            // 获取 userId（注意这里的 key 要与你生成 Token 时一致）
+            Object userId = jwt.getPayload("userId");
+
+            if (userId == null) {
+                response.setStatusCode(HttpStatus.UNAUTHORIZED);
+                return response.setComplete();
+            }
+
+            // 将 userId 放入请求头
+            ServerHttpRequest newRequest = request.mutate()
+                    .header("X-User-Id", userId.toString())
+                    .build();
+
+            // 使用新的 Request 继续向下游转发
+            return chain.filter(
+                    exchange.mutate()
+                            .request(newRequest)
+                            .build()
+            );
         } catch (Exception e) {
             response.setStatusCode(HttpStatus.UNAUTHORIZED);
             return response.setComplete();
         }
-
-        // 5. 校验通过，放行请求给下游的微服务
-        return chain.filter(exchange);
     }
-
     @Override
     public int getOrder() {
         return 0;

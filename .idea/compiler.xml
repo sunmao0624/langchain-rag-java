@@ -10,6 +10,7 @@
         <module name="common-api" />
         <module name="user-service" />
         <module name="rag-service" />
+        <module name="note-service" />
         <module name="gateway-service" />
       </profile>
     </annotationProcessing>
@@ -19,6 +20,7 @@
       <module name="common-api" options="-parameters" />
       <module name="gateway-service" options="-parameters" />
       <module name="langchain-rag-java" options="-parameters" />
+      <module name="note-service" options="-parameters" />
       <module name="rag-service" options="-parameters" />
       <module name="user-service" options="-parameters" />
     </option>

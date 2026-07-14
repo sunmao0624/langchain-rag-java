@@ -13,6 +13,7 @@
         <module>user-service</module>
         <module>gateway-service</module>
         <module>rag-service</module>
+        <module>note-service</module>
     </modules>
 
     <properties>

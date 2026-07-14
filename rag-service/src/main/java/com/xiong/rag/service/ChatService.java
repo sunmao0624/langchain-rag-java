@@ -1,90 +1,183 @@
 package com.xiong.rag.service;
 
 import dev.langchain4j.data.document.Document;
-import dev.langchain4j.data.document.splitter.DocumentSplitters;
-import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.data.document.parser.apache.pdfbox.ApachePdfBoxDocumentParser;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatLanguageModel;
-import dev.langchain4j.model.embedding.EmbeddingModel;
-import dev.langchain4j.model.ollama.OllamaChatModel;
-import dev.langchain4j.model.ollama.OllamaEmbeddingModel;
+import dev.langchain4j.model.chat.StreamingChatLanguageModel;
 import dev.langchain4j.rag.content.retriever.ContentRetriever;
-import dev.langchain4j.rag.content.retriever.EmbeddingStoreContentRetriever;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.service.SystemMessage;
-import dev.langchain4j.store.embedding.EmbeddingStore;
+import dev.langchain4j.service.TokenStream;
 import dev.langchain4j.store.embedding.EmbeddingStoreIngestor;
-import dev.langchain4j.store.embedding.chroma.ChromaEmbeddingStore;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 public class ChatService {
+    private static final Logger log = LoggerFactory.getLogger(ChatService.class);
+    /**
+     * RAG 对话助手
+     */
+    private interface Assistant {
+        @SystemMessage("""
+            你是一名专业的论文问答助手。
+            请遵循以下规则：
+            【回答原则】
+            1. 优先回答用户真正的问题，不要复述整篇论文。
+            2. 不要出现：
+            - 根据上下文
+            - 根据提供的信息
+            - 根据知识库
+            - 文档中提到
+            直接回答即可。
+            3. 如果知识库可以回答：
+            直接组织语言回答。
+            4. 如果答案分散在多个段落：
+            请综合多个片段后回答。
+            5. 如果知识库没有答案：
+            明确回答：
+            "知识库中没有相关信息。"
+            不要猜测。
+            【回答风格】
+            语言自然。
+            像 ChatGPT。
+            不要机械列：
+            研究背景
+            研究目的
+            核心贡献
+            除非用户要求。
+            回答尽量简洁准确。
+        """)
+        TokenStream chat(String userMessage);
+    }
 
-    // 定义一个 AI 助手接口，AiServices 会在底层动态代理它
-    interface Assistant {
-        @SystemMessage("你是一个专业的智能助手。请严格根据用户提供的上下文知识来回答问题。如果知识库中没有提及，请直接回答“我的知识库中没有相关信息”，绝不要瞎编。")
-        String chat(String userMessage);
+    /**
+     * 标签提取助手
+     */
+    private interface TagAssistant {
+
+        @SystemMessage("""
+                你是一名文本标签提取助手。
+                请遵守下面规则：
+                1、根据文本提取3~5个最核心标签
+                2、不要解释
+                3、不要编号
+                4、不要输出其它内容
+                5、标签之间使用英文逗号
+                示例：
+                输入：
+                今天学习 SpringBoot、Redis、MyBatis。
+                输出：
+                SpringBoot,Redis,MyBatis
+                """)
+        String chat(String text);
     }
 
     private final Assistant assistant;
+    private final TagAssistant tagAssistant;
     private final EmbeddingStoreIngestor ingestor;
 
-    public ChatService() {
-        // 1. 初始化对话大模型 (负责说话，保持 qwen3.5:4b)
-        ChatLanguageModel chatModel = OllamaChatModel.builder()
-                .baseUrl("http://127.0.0.1:11434")
-                .modelName("qwen3.5:4b")
-                .temperature(0.3) // 严谨模式，调低发散性
-                .build();
+    public ChatService(
+            StreamingChatLanguageModel streamingChatLanguageModel,
+            ChatLanguageModel chatLanguageModel,
+            ContentRetriever contentRetriever,
+            EmbeddingStoreIngestor ingestor,
+            MessageWindowChatMemory chatMemory) {
 
-        // 2. 初始化嵌入模型 (负责阅读理解，使用你拉取的 nomic-embed-text)
-        EmbeddingModel embeddingModel = OllamaEmbeddingModel.builder()
-                .baseUrl("http://127.0.0.1:11434")
-                .modelName("nomic-embed-text")
-                .build();
+        this.ingestor = ingestor;
 
-        // 3. 连接 ChromaDB 向量数据库 (我们在 Docker 里映射的 8000 端口)
-        EmbeddingStore<TextSegment> embeddingStore = ChromaEmbeddingStore.builder()
-                .baseUrl("http://127.0.0.1:8085")
-                .collectionName("xiong_rag_collection")
-                .build();
-
-        // 4. 构建数据注入器 (负责把长文章切成一小段，转成向量存进数据库)
-        this.ingestor = EmbeddingStoreIngestor.builder()
-                // 核心：把超长文本按 300 个字符切片，段落间重叠 30 个字符防止语义断裂
-                .documentSplitter(DocumentSplitters.recursive(300, 30))
-                .embeddingModel(embeddingModel)
-                .embeddingStore(embeddingStore)
-                .build();
-
-        // 5. 构建内容检索器 (负责在用户提问时，去数据库里捞出最相关的 3 段知识)
-        ContentRetriever contentRetriever = EmbeddingStoreContentRetriever.builder()
-                .embeddingStore(embeddingStore)
-                .embeddingModel(embeddingModel)
-                .maxResults(3)
-                .minScore(0.5) // 相似度及格线
-                .build();
-
-        // 6. 终极组装：把 大模型 + 检索器 + 历史记忆 全都塞给这个智能助手
+        /*
+          RAG 助手
+         */
         this.assistant = AiServices.builder(Assistant.class)
-                .chatLanguageModel(chatModel)
+                .streamingChatLanguageModel(streamingChatLanguageModel)
                 .contentRetriever(contentRetriever)
-                .chatMemory(MessageWindowChatMemory.withMaxMessages(10)) // 赋予它记忆最近 10 句话的能力
+                .chatMemory(chatMemory)
+                .build();
+
+        /*
+          标签助手
+         */
+        this.tagAssistant = AiServices.builder(TagAssistant.class)
+                .chatLanguageModel(chatLanguageModel)
                 .build();
     }
 
     /**
-     * 向大模型喂入新的私有知识
+     * 写入知识库
      */
     public void feedKnowledge(String text) {
-        Document doc = Document.from(text);
-        ingestor.ingest(doc);
+
+        log.info("开始录入知识，文本长度：{}", text.length());
+
+        Document document = Document.from(text);
+
+        ingestor.ingest(document);
+
+        log.info("知识录入完成");
     }
 
     /**
-     * 和 RAG 助手对话
+     * PDF 导入
      */
-    public String chat(String question) {
+    public void feedKnowledgeFromCloudAPI(MultipartFile file)
+            throws IOException {
+        log.info("开始解析 PDF：{}", file.getOriginalFilename());
+
+        ApachePdfBoxDocumentParser parser =
+                new ApachePdfBoxDocumentParser();
+
+        Document document =
+                parser.parse(file.getInputStream());
+
+        log.info("PDF 解析完成");
+
+        ingestor.ingest(document);
+
+        log.info("PDF 已成功写入知识库");
+    }
+
+    /**
+     * 流式聊天
+     */
+    public TokenStream streamChat(String question) {
+        String q = question.length() > 100
+                ? question.substring(0,100)
+                : question;
+
+        log.info("收到聊天请求：{}", q);
+
         return assistant.chat(question);
+    }
+
+    /**
+     * AI 标签提取
+     */
+    public String extractTags(String text) {
+
+        log.info("开始提取标签");
+
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+
+        // 防止 Token 过大
+        if (text.length() > 800) {
+
+            log.warn("文本过长，已截断，原长度：{}", text.length());
+
+            text = text.substring(0, 800);
+        }
+
+        String tags = tagAssistant.chat(text);
+
+        log.info("标签提取成功：{}", tags);
+
+        return tags;
     }
 }

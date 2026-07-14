@@ -1,0 +1,25 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: note-service # 服务名称，必须与 Gateway 网关路由配置中的 lb://note-service 保持完全一致
+
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 127.0.0.1:8848 # 连接本地 Docker 部署的 Nacos 注册中心
+
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://127.0.0.1:3307/note_db?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
+    username: root
+    password: root
+
+# MyBatis-Plus 配置
+mybatis-plus:
+  configuration:
+    # 开启驼峰命名自动映射 (如 MySQL 里的 create_time 会自动映射给 Java 实体类的 createTime)
+    map-underscore-to-camel-case: true
+    # 在控制台打印执行的底层 SQL，这对于高并发系统开发阶段的性能调优和排错非常重要
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
