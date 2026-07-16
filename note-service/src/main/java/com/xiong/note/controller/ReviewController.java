@@ -2,11 +2,11 @@ package com.xiong.note.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.xiong.common.result.Result;
+import com.xiong.common.utils.UserContext;
 import com.xiong.note.entity.Note;
 import com.xiong.note.entity.ReviewTask;
 import com.xiong.note.service.NoteService;
 import com.xiong.note.service.ReviewTaskService;
-import com.xiong.note.utils.UserContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -27,25 +27,21 @@ public class ReviewController {
      */
     @GetMapping("/today")
     public Result<List<Note>> getTodayReviewTasks() {
-        // 1. 去 review_task 表查出今天分配给该用户的所有未复习的任务 ID
-        LambdaQueryWrapper<ReviewTask> taskWrapper = new LambdaQueryWrapper<>();
-        taskWrapper.eq(ReviewTask::getUserId, UserContext.getUserId())
-                .eq(ReviewTask::getReviewDate, LocalDate.now())
-                .eq(ReviewTask::getIsReviewed, false);
 
-        List<ReviewTask> tasks = reviewTaskService.list(taskWrapper);
+        Long userId = UserContext.getUserId();
+
+        List<ReviewTask> tasks = reviewTaskService.getTodayTasks(userId);
 
         if (tasks.isEmpty()) {
-            return Result.success(null); // 今天没有复习任务
+            return Result.success(null);
         }
 
-        // 2. 提取出所有需要复习的 noteId
         List<Long> noteIds = tasks.stream()
                 .map(ReviewTask::getNoteId)
-                .collect(Collectors.toList());
+                .toList();
 
-        // 3. 去 note 表把具体的笔记内容查出来返回给前端卡片
         List<Note> notesToReview = noteService.listByIds(noteIds);
+
         return Result.success(notesToReview);
     }
 

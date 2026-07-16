@@ -2,9 +2,9 @@ package com.xiong.note.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.xiong.common.result.Result;
+import com.xiong.common.utils.UserContext;
 import com.xiong.note.entity.Note;
 import com.xiong.note.service.NoteService;
-import com.xiong.note.utils.UserContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 

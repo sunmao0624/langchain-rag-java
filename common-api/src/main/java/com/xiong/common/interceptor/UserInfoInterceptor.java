@@ -1,25 +1,28 @@
-package com.xiong.note.config;
+package com.xiong.common.interceptor;
 
-import cn.hutool.core.util.StrUtil;
-import com.xiong.note.utils.UserContext;
+import com.xiong.common.utils.UserContext;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 @Component
-public class LoginInterceptor implements HandlerInterceptor {
+public class UserInfoInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request,
                              HttpServletResponse response,
-                             Object handler) {
+                             Object handler) throws Exception {
 
-        String userId = request.getHeader("X-User-Id");
+        // 1. 获取请求头
+        String userIdStr = request.getHeader("userId");
 
-        if (StrUtil.isNotBlank(userId)) {
-            UserContext.setUserId(Long.parseLong(userId));
+        // 2. 放入 ThreadLocal
+        if (StringUtils.hasText(userIdStr)) {
+            UserContext.setUserId(Long.parseLong(userIdStr));
         }
 
+        // 3. 放行
         return true;
     }
 

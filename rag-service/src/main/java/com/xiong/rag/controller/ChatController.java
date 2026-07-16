@@ -1,11 +1,15 @@
 package com.xiong.rag.controller;
 
 import com.xiong.common.result.Result;
+import com.xiong.common.utils.UserContext;
+import com.xiong.note.service.impl.NoteServiceImpl;
 import com.xiong.rag.client.UserClient;
 import com.xiong.rag.dto.ChatRequestDTO;
 import com.xiong.rag.dto.KnowledgeDTO;
 import com.xiong.rag.service.ChatService;
 import dev.langchain4j.service.TokenStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -18,6 +22,8 @@ import java.util.Map;
 @RequestMapping("/ai")
 public class ChatController {
 
+    private static final Logger logger = LoggerFactory.getLogger(NoteServiceImpl.class);
+
     @Autowired
     private ChatService chatService;
     @Autowired
@@ -29,25 +35,32 @@ public class ChatController {
         return Result.success("知识录入成功！大模型已记住该信息。");
     }
 
-    @PostMapping("/upload/pdf")
-    public Result<String> uploadPdf(@RequestParam("file") MultipartFile file) {
+    @PostMapping("/upload/doc")
+    public Result<String> uploadDoc(@RequestParam("file") MultipartFile file) {
+
         if (file.isEmpty()) {
             return Result.error(400, "上传的文件不能为空");
         }
+
+        Long userId = UserContext.getUserId();
+        if (userId == null) {
+            return Result.error(401, "用户未登录");
+        }
+
         try {
-            // 1. 先去解析并存储大模型知识库
-            chatService.feedKnowledgeFromCloudAPI(file);
+            // 解析文档并写入向量库
+            chatService.feedKnowledgeFromCloudAPI(file, userId);
 
-            // 2. 🌟 知识录入成功后，通过 OpenFeign 远程调用 user-service 扣除积分
-            // 假设当前登录的用户 ID 是 1001，扣除 10 积分
-            Result<String> feignResult = userClient.deductPoint(1001L, 10);
+            // 扣积分
+            Result<String> feignResult = userClient.deductPoint(userId, 10);
 
-            System.out.println("远程调用 user-service 返回结果: " + feignResult.getMessage());
+            logger.info("扣积分结果：{}", feignResult.getMessage());
 
-            return Result.success("PDF 知识解析成功！且已远程扣除 10 个积分。");
+            return Result.success("文档解析成功，已扣除 10 积分。");
+
         } catch (Exception e) {
-            e.printStackTrace();
-            return Result.error(500, "文件解析失败: " + e.getMessage());
+            logger.error("文档解析失败", e);
+            return Result.error(500, "文件解析失败：" + e.getMessage());
         }
     }
 

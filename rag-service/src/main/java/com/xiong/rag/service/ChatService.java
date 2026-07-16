@@ -1,17 +1,28 @@
 package com.xiong.rag.service;
 
+import com.xiong.common.utils.UserContext;
 import dev.langchain4j.data.document.Document;
+import dev.langchain4j.data.document.DocumentParser;
+import dev.langchain4j.data.document.parser.TextDocumentParser;
 import dev.langchain4j.data.document.parser.apache.pdfbox.ApachePdfBoxDocumentParser;
+import dev.langchain4j.data.document.parser.apache.poi.ApachePoiDocumentParser;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.chat.StreamingChatLanguageModel;
+import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.rag.content.retriever.ContentRetriever;
+import dev.langchain4j.rag.content.retriever.EmbeddingStoreContentRetriever;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.service.SystemMessage;
 import dev.langchain4j.service.TokenStream;
 import dev.langchain4j.store.embedding.EmbeddingStoreIngestor;
+import dev.langchain4j.store.embedding.filter.MetadataFilterBuilder;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
+import dev.langchain4j.store.embedding.EmbeddingStore;
+import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.model.embedding.EmbeddingModel;
 
 import java.io.IOException;
 import org.slf4j.Logger;
@@ -85,18 +96,35 @@ public class ChatService {
     public ChatService(
             StreamingChatLanguageModel streamingChatLanguageModel,
             ChatLanguageModel chatLanguageModel,
-            ContentRetriever contentRetriever,
+            EmbeddingStore<TextSegment> embeddingStore,
+            EmbeddingModel embeddingModel,
             EmbeddingStoreIngestor ingestor,
             MessageWindowChatMemory chatMemory) {
 
         this.ingestor = ingestor;
+
+        // 🌟 核心改造：创建一个能够根据当前线程 userId 进行过滤的动态 Retriever
+        ContentRetriever dynamicRetriever = query -> {
+            // 从自定义的 ThreadLocal 或 Spring Security Context 中获取当前请求的用户ID
+            Long currentUserId = UserContext.getUserId();
+
+            // 构建带 Filter 的 Retriever（只检索 metadata 中 userId 等于当前用户的切片）
+            EmbeddingStoreContentRetriever retriever = EmbeddingStoreContentRetriever.builder()
+                    .embeddingStore(embeddingStore)
+                    .embeddingModel(embeddingModel)
+                    .maxResults(3) // Top-K
+                    .filter(MetadataFilterBuilder.metadataKey("userId").isEqualTo(currentUserId))
+                    .build();
+
+            return retriever.retrieve(query);
+        };
 
         /*
           RAG 助手
          */
         this.assistant = AiServices.builder(Assistant.class)
                 .streamingChatLanguageModel(streamingChatLanguageModel)
-                .contentRetriever(contentRetriever)
+                .contentRetriever(dynamicRetriever)
                 .chatMemory(chatMemory)
                 .build();
 
@@ -123,23 +151,45 @@ public class ChatService {
     }
 
     /**
-     * PDF 导入
+     * doc 导入
      */
-    public void feedKnowledgeFromCloudAPI(MultipartFile file)
-            throws IOException {
-        log.info("开始解析 PDF：{}", file.getOriginalFilename());
+    public void feedKnowledgeFromCloudAPI(MultipartFile file, Long userId) throws IOException {
+        String filename = file.getOriginalFilename();
+        log.info("开始解析文件：{}", filename);
 
-        ApachePdfBoxDocumentParser parser =
-                new ApachePdfBoxDocumentParser();
+        // 1. 获取文件后缀
+        String extension = StringUtils.getFilenameExtension(filename).toLowerCase();
+        DocumentParser parser;
 
-        Document document =
-                parser.parse(file.getInputStream());
+        // 2. 根据后缀选择解析器
+        switch (extension) {
+            case "pdf":
+                parser = new ApachePdfBoxDocumentParser();
+                break;
+            case "doc":
+            case "docx":
+            case "ppt":
+            case "pptx":
+                parser = new ApachePoiDocumentParser();
+                break;
+            case "txt":
+            case "md":
+                parser = new TextDocumentParser();
+                break;
+            default:
+                throw new IllegalArgumentException("不支持的文件格式: " + extension);
+        }
 
-        log.info("PDF 解析完成");
+        // 3. 解析文档
+        Document document = parser.parse(file.getInputStream());
 
+        // 4. 🌟 关键：给文档注入 Metadata（元数据），为了后续的租户隔离
+        document.metadata().put("userId", userId);
+        document.metadata().put("fileName", filename);
+
+        // 5. 切片并入库
         ingestor.ingest(document);
-
-        log.info("PDF 已成功写入知识库");
+        log.info("文件 [{}] 解析并存入向量库成功，所属用户: {}", filename, userId);
     }
 
     /**
